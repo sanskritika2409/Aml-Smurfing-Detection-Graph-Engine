@@ -1,7 +1,13 @@
 {
-  "n_accounts": 2352,
-  "n_ground_truth_smurf_accounts": 352,
-  "recall_at_352": 0.304,
-  "recall_at_100": 0.33,
-  "precision_at_352": 0.304
+  "churn_model": {
+    "auc_roc": 0.8972,
+    "f1_score": 0.7926,
+    "precision": 0.7729,
+    "recall": 0.8134
+  },
+  "ltv_model": {
+    "mape_on_active_customers": 0.0302,
+    "mean_actual_ltv": 472.52,
+    "mean_predicted_ltv": 466.24
+  }
 }

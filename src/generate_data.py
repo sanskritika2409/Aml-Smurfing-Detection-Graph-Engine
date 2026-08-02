@@ -1,135 +1,124 @@
 """
 generate_data.py
-Generates a synthetic banking transaction dataset with:
-  - Normal customer-to-customer transactions (organic social/family network)
-  - Injected "Smurfing" rings (1 kingpin -> many mule accounts -> 1 offshore sink),
-    each transaction kept under the $10,000 CTR reporting threshold.
-
-Output: data/transactions.csv, data/accounts.csv (with ground-truth labels used ONLY for evaluation)
+Generates synthetic customer profile, clickstream, and transaction data for the
+Customer Digital Twin project, with realistic churn-correlated behavioral decay
+patterns baked in (so the downstream churn model has real signal to learn from).
 """
 import pandas as pd
 import numpy as np
 from faker import Faker
 import random
-import uuid
 from datetime import datetime, timedelta
 
-random.seed(42)
-np.random.seed(42)
+random.seed(7)
+np.random.seed(7)
 fake = Faker()
-Faker.seed(42)
+Faker.seed(7)
 
-N_NORMAL_ACCOUNTS = 2000
-N_NORMAL_TXNS = 50000
-N_RINGS = 8                 # number of separate smurfing rings
-MULES_PER_RING = (15, 60)   # random range of mule accounts per ring
-START_DATE = datetime(2025, 1, 1)
-
-
-def make_accounts():
-    accounts = []
-    for i in range(N_NORMAL_ACCOUNTS):
-        accounts.append({
-            "account_id": f"ACC_{i:05d}",
-            "name": fake.name(),
-            "branch_code": random.choice(["BR-DEL", "BR-MUM", "BR-BLR", "BR-LKO", "BR-KOL"]),
-            "account_type": random.choice(["SAVINGS", "CURRENT"]),
-            "is_smurf_related": False,
-            "role": "normal",
-        })
-    return pd.DataFrame(accounts)
+N_USERS = 6000
+OBSERVATION_DAYS = 180
+PRODUCT_CATEGORIES = ["Electronics", "Fashion", "Home", "Beauty", "Sports", "Books", "Grocery", "Toys"]
+END_DATE = datetime(2025, 12, 31)
+START_DATE = END_DATE - timedelta(days=OBSERVATION_DAYS)
 
 
-def random_timestamp(day_span=180):
-    return START_DATE + timedelta(
-        days=random.randint(0, day_span),
-        hours=random.randint(0, 23),
-        minutes=random.randint(0, 59),
-    )
-
-
-def generate_normal_transactions(accounts_df):
-    ids = accounts_df["account_id"].tolist()
+def make_users():
     rows = []
-    # give each account a small set of "regular contacts" -> organic clustering
-    contacts = {acc: random.sample(ids, k=random.randint(2, 6)) for acc in ids}
-    for _ in range(N_NORMAL_TXNS):
-        sender = random.choice(ids)
-        receiver = random.choice(contacts[sender]) if random.random() < 0.85 else random.choice(ids)
-        if sender == receiver:
-            continue
-        amount = round(np.random.gamma(shape=2.0, scale=250) + 5, 2)
+    for i in range(N_USERS):
+        signup_date = fake.date_between(start_date="-3y", end_date="-30d")
+        plan = np.random.choice(["Free", "Pro", "Enterprise"], p=[0.55, 0.35, 0.10])
+        # underlying "true" engagement propensity, drives both behavior and churn
+        base_engagement = np.clip(np.random.beta(2, 2), 0.02, 0.98)
+        # each user has a latent preference for 1-2 product categories (drives realistic purchase patterns
+        # so the recommender has genuine signal to learn, rather than fully random category choice)
+        n_pref = random.choice([1, 1, 2])
+        preferred_categories = random.sample(PRODUCT_CATEGORIES, k=n_pref)
         rows.append({
-            "transaction_id": str(uuid.uuid4())[:8],
-            "timestamp": random_timestamp(),
-            "sender_account": sender,
-            "receiver_account": receiver,
-            "amount": amount,
-            "device_id": f"DEV_{random.randint(1, 900)}",
+            "user_id": f"U_{i:05d}",
+            "signup_date": signup_date,
+            "plan_type": plan,
+            "region": random.choice(["North", "South", "East", "West"]),
+            "_base_engagement": base_engagement,  # latent, not a real feature - used only to simulate behavior
+            "_preferred_categories": preferred_categories,  # latent, not a real feature
         })
     return pd.DataFrame(rows)
 
 
-def generate_smurfing_ring(ring_idx, extra_accounts):
-    """Kingpin -> N mules -> offshore sink, all within a tight time window, amounts just under $10k reporting limit."""
-    n_mules = random.randint(*MULES_PER_RING)
-    kingpin = f"KING_{ring_idx:02d}"
-    sink = f"SINK_{ring_idx:02d}"
-    mules = [f"MULE_{ring_idx:02d}_{j:03d}" for j in range(n_mules)]
+def simulate_user_activity(users: pd.DataFrame):
+    sessions, orders = [], []
 
-    new_accounts = [
-        {"account_id": kingpin, "name": fake.name(), "branch_code": "BR-DEL",
-         "account_type": "CURRENT", "is_smurf_related": True, "role": "kingpin"},
-        {"account_id": sink, "name": fake.name(), "branch_code": "BR-MUM",
-         "account_type": "CURRENT", "is_smurf_related": True, "role": "sink"},
-    ]
-    for m in mules:
-        new_accounts.append({"account_id": m, "name": fake.name(), "branch_code": "BR-BLR",
-                              "account_type": "SAVINGS", "is_smurf_related": True, "role": "mule"})
-    extra_accounts.extend(new_accounts)
+    for _, u in users.iterrows():
+        uid = u["user_id"]
+        engagement = u["_base_engagement"]
 
-    rows = []
-    burst_start = random_timestamp(day_span=150)
-    for j, m in enumerate(mules):
-        # Kingpin splits money into sub-$10k chunks to each mule, in a tight burst
-        amt = round(random.uniform(8500, 9900), 2)
-        ts = burst_start + timedelta(minutes=random.randint(0, 90))
-        rows.append({
-            "transaction_id": str(uuid.uuid4())[:8],
-            "timestamp": ts,
-            "sender_account": kingpin,
-            "receiver_account": m,
-            "amount": amt,
-            "device_id": "DEV_777",  # same device -> another red flag
-        })
-        # Mule immediately forwards to the offshore sink, minus a small "fee"
-        fwd_ts = ts + timedelta(minutes=random.randint(5, 45))
-        rows.append({
-            "transaction_id": str(uuid.uuid4())[:8],
-            "timestamp": fwd_ts,
-            "sender_account": m,
-            "receiver_account": sink,
-            "amount": round(amt * random.uniform(0.95, 0.99), 2),
-            "device_id": f"DEV_{random.randint(1, 900)}",
-        })
-    return pd.DataFrame(rows)
+        # decide if this user is a "churner" during the observation window
+        will_churn = np.random.random() > engagement  # low engagement -> more likely to churn
+        decay_start = np.random.randint(int(OBSERVATION_DAYS * 0.3), int(OBSERVATION_DAYS * 0.8)) if will_churn else None
+
+        n_sessions_base = max(1, int(np.random.poisson(lam=engagement * 40) + 1))
+        session_days = sorted(np.random.choice(range(OBSERVATION_DAYS), size=min(n_sessions_base, OBSERVATION_DAYS), replace=False))
+
+        for day_offset in session_days:
+            # if churner and past decay point, sharply reduce probability of session occurring
+            if will_churn and decay_start is not None and day_offset > decay_start:
+                if np.random.random() > 0.08:  # 92% chance the session is "skipped" post decay
+                    continue
+            ts = START_DATE + timedelta(days=int(day_offset), hours=random.randint(6, 23))
+            duration = max(0.3, np.random.normal(loc=engagement * 12, scale=3))
+            if will_churn and decay_start is not None and day_offset > decay_start:
+                duration *= 0.3  # shorter, disengaged sessions near the end
+            pages = max(1, int(duration * random.uniform(1.5, 3)))
+            sessions.append({
+                "user_id": uid,
+                "session_date": ts,
+                "duration_minutes": round(duration, 2),
+                "pages_viewed": pages,
+                "device": random.choice(["mobile", "desktop", "tablet"]),
+            })
+
+        # purchases correlate with engagement and plan
+        plan_multiplier = {"Free": 0.5, "Pro": 1.2, "Enterprise": 2.0}[u["plan_type"]]
+        n_orders = max(0, int(np.random.poisson(lam=engagement * 6 * plan_multiplier)))
+        order_days = sorted(np.random.choice(range(OBSERVATION_DAYS), size=min(n_orders, OBSERVATION_DAYS), replace=False)) if n_orders else []
+        preferred_categories = u["_preferred_categories"]
+        for day_offset in order_days:
+            if will_churn and decay_start is not None and day_offset > decay_start:
+                if np.random.random() > 0.15:
+                    continue
+            ts = START_DATE + timedelta(days=int(day_offset))
+            # 75% chance the purchase matches the user's latent preferred categor(y/ies), 25% exploration
+            category = random.choice(preferred_categories) if np.random.random() < 0.75 else random.choice(PRODUCT_CATEGORIES)
+            revenue = round(np.random.gamma(shape=2.0, scale=25) * plan_multiplier + 5, 2)
+            orders.append({
+                "user_id": uid,
+                "order_date": ts,
+                "product_category": category,
+                "revenue": revenue,
+            })
+
+    return pd.DataFrame(sessions), pd.DataFrame(orders), users.assign(will_churn_label=[
+        np.random.random() > e for e in users["_base_engagement"]
+    ])
 
 
 def main():
-    normal_accounts = make_accounts()
-    normal_txns = generate_normal_transactions(normal_accounts)
+    users = make_users()
+    sessions, orders, users_labeled = simulate_user_activity(users)
 
-    extra_accounts = []
-    ring_txns = [generate_smurfing_ring(i, extra_accounts) for i in range(N_RINGS)]
+    # ground-truth churn label: no session AND no order in the final 30 days of the window
+    cutoff = END_DATE - timedelta(days=30)
+    active_recent = set(sessions[sessions["session_date"] >= cutoff]["user_id"]) | set(
+        orders[orders["order_date"] >= cutoff]["user_id"]
+    )
+    users_labeled["churn_label"] = (~users_labeled["user_id"].isin(active_recent)).astype(int)
+    users_labeled = users_labeled.drop(columns=["_base_engagement", "_preferred_categories", "will_churn_label"])
 
-    all_accounts = pd.concat([normal_accounts, pd.DataFrame(extra_accounts)], ignore_index=True)
-    all_txns = pd.concat([normal_txns] + ring_txns, ignore_index=True).sort_values("timestamp").reset_index(drop=True)
+    users_labeled.to_csv("data/users.csv", index=False)
+    sessions.to_csv("data/sessions.csv", index=False)
+    orders.to_csv("data/orders.csv", index=False)
 
-    all_accounts.to_csv("data/accounts.csv", index=False)
-    all_txns.to_csv("data/transactions.csv", index=False)
-
-    print(f"Accounts: {len(all_accounts)} ({all_accounts['is_smurf_related'].sum()} smurf-related)")
-    print(f"Transactions: {len(all_txns)}")
+    print(f"Users: {len(users_labeled)} | Churn rate: {users_labeled['churn_label'].mean():.1%}")
+    print(f"Sessions: {len(sessions)} | Orders: {len(orders)}")
 
 
 if __name__ == "__main__":

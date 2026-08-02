@@ -1,12 +1,12 @@
-# 🛡️ AML Smurfing Detection Graph Engine
+# 👤 Customer Digital Twin AI Engine
 
-**Graph-based unsupervised anomaly detection for identifying structured money-laundering ("smurfing") rings in banking transaction networks.**
+**A unified customer intelligence API that predicts churn, forecasts 12-month lifetime value, generates personalized recommendations, and outputs one concrete next-best-action per customer.**
 
 ![Python](https://img.shields.io/badge/Python-3.12-blue?logo=python&logoColor=white)
-![NetworkX](https://img.shields.io/badge/NetworkX-Graph%20Analytics-orange)
-![Scikit--learn](https://img.shields.io/badge/Scikit--learn-IsolationForest-F7931E?logo=scikitlearn&logoColor=white)
+![XGBoost](https://img.shields.io/badge/XGBoost-Churn%20%26%20LTV-3776AB)
+![Scikit--learn](https://img.shields.io/badge/Scikit--learn-SVD%20Recommender-F7931E?logo=scikitlearn&logoColor=white)
 ![FastAPI](https://img.shields.io/badge/FastAPI-Serving%20Layer-009688?logo=fastapi&logoColor=white)
-![Streamlit](https://img.shields.io/badge/Streamlit-Dashboard-FF4B4B?logo=streamlit&logoColor=white)
+![Streamlit](https://img.shields.io/badge/Streamlit-What--If%20Dashboard-FF4B4B?logo=streamlit&logoColor=white)
 ![License](https://img.shields.io/badge/License-MIT-green)
 ![Status](https://img.shields.io/badge/Status-Working%20Prototype-brightgreen)
 
@@ -14,74 +14,89 @@
 
 ## 📌 Problem Statement
 
-Financial regulations (e.g. the Bank Secrecy Act) require banks to report any cash transaction over **$10,000**. Money launderers evade this by **"smurfing"** — splitting a large sum into many transactions just under the threshold, routed through disposable "mule" accounts to an offshore sink.
+Retention, growth, and personalization teams typically run three disconnected tools: a churn model, an LTV spreadsheet, and a recommendation engine. A high-value customer about to churn and a low-value customer just browsing get the same generic marketing blast, because nobody combined the signals.
 
-Rule-based engines that only flag large transactions are structurally blind to this pattern, because **no single transaction ever crosses the threshold**. This project treats the transaction ledger as a **graph problem**: it looks at *who is connected to whom*, not just *how much moved*.
+This project builds a single **"Digital Twin"** per customer: one API call returns their churn risk, their forecasted value, their recommended products, **and** the specific action the business should take.
 
 ## 🏗️ Architecture
 
 ```
-Synthetic Transactions (Faker)
+Synthetic Users + Clickstream + Orders (Faker)
         │
         ▼
-Directed Transaction Graph (NetworkX)
+RFM + Behavioral Feature Engineering
+ (Recency, Frequency, Monetary, login trend slope, session decay)
         │
-        ▼
-Graph + Behavioral Feature Engineering
- (PageRank, Betweenness, Velocity, Round-Amount Ratio, ...)
-        │
-        ▼
-Unsupervised Anomaly Ensemble
- (Isolation Forest + PCA Reconstruction Error)
-        │
-        ▼
-Graph Risk Propagation (1-hop neighborhood expansion)
-        │
-        ├──► FastAPI serving layer (/aml/v1/screen/{account_id})
-        └──► Streamlit investigator dashboard
+        ├──► XGBoost Churn Classifier ─────┐
+        ├──► XGBoost LTV Regressor ─────────┤
+        └──► SVD Collaborative Filtering ───┤
+                                             ▼
+                          Business-Rule Orchestrator
+                    (combines churn + LTV + recs → 1 action)
+                                             │
+                        ┌────────────────────┴───────────────────┐
+                        ▼                                        ▼
+                FastAPI serving layer                  Streamlit "What-If" dashboard
+              (/customer/v1/twin/{id})
 ```
 
-## 📊 Results (on synthetic ground truth)
+## 📊 Results (real, on held-out test data)
 
-Because this is unsupervised, evaluation is done against **known injected smurfing rings** (8 rings, 352 accounts) used *only* for scoring — never seen by the model during training.
+### Churn Prediction
+| Metric | Score |
+|---|---|
+| AUC-ROC | **0.897** |
+| F1 Score | 0.793 |
+| Precision | 0.773 |
+| Recall | 0.813 |
 
-| Stage | Recall | Precision |
-|---|---|---|
-| Node-level anomaly score alone (Isolation Forest + PCA) | 30.4% | 30.4% |
-| **+ Graph risk propagation (1-hop from top-1% seeds)** | **100%** | **69.2%** |
+![Churn ROC Curve](outputs/figures/churn_roc_curve.png)
 
-**Why this matters:** Kingpin and offshore-sink accounts are structurally obvious (huge fan-out/fan-in, high PageRank) and get caught with near-perfect precision in the *very top* alerts. Individual mule accounts, however, look almost identical to a normal customer making one mid-sized transfer — they're only exposed once you look at *who they're connected to*. Propagating risk from the seed hubs across the graph is what pushes recall from 30% to 100%, which mirrors how real AML investigators expand a case from a seed alert outward.
+### Lifetime Value Prediction
+| Metric | Score |
+|---|---|
+| MAPE (active customers) | **3.0%** |
+| Mean actual 12m LTV | $472.52 |
+| Mean predicted 12m LTV | $466.24 |
 
-![Precision Recall Comparison](outputs/figures/precision_recall_comparison.png)
+![LTV Prediction Quality](outputs/figures/ltv_prediction_quality.png)
 
-### Risk Score Distribution by Role
-![Risk Score Distribution](outputs/figures/risk_score_distribution.png)
+### Recommendation Engine (SVD Collaborative Filtering)
+Evaluated on each customer's held-out most recent purchase — never seen during training.
 
-### Top Discriminative Features
-![Feature Importance](outputs/figures/feature_importance.png)
+| Metric | Score |
+|---|---|
+| Recall@3 | **63.7%** |
+| Random baseline Recall@3 | 37.5% (3 of 8 categories) |
+| **Lift over random** | **1.7x** |
 
-### Example: One Smurfing Ring Visualized
-![Smurfing Ring Network](outputs/figures/smurfing_ring_network.png)
+![Recommender Lift](outputs/figures/recommender_lift.png)
 
-*(An interactive version of this graph is generated at `outputs/figures/interactive_smurfing_graph.html` — open it directly in a browser to pan/zoom/hover over nodes.)*
+### Top Churn Drivers
+![Churn Feature Importance](outputs/figures/churn_feature_importance.png)
+
+### Next-Best-Action Distribution (business orchestrator output)
+![Action Distribution](outputs/figures/action_distribution.png)
 
 ## 🗂️ Repository Structure
 
 ```
-├── data/                     # Generated datasets (transactions, accounts, features, graph)
+├── data/                        # Generated users, sessions, orders, features, scored twins
 ├── src/
-│   ├── generate_data.py      # Synthetic transaction + smurfing ring generator
-│   ├── build_graph_features.py  # NetworkX graph construction + feature engineering
-│   ├── train_model.py        # Isolation Forest + PCA reconstruction ensemble
-│   ├── propagate_risk.py     # Graph-based 1-hop risk propagation
-│   └── make_visuals.py       # Generates all charts + interactive graph
-├── api/main.py                # FastAPI serving layer
-├── dashboard/app.py           # Streamlit investigator dashboard
+│   ├── generate_data.py         # Synthetic user/session/order generator with realistic churn decay
+│   ├── build_features.py        # RFM + behavioral feature engineering (leakage-safe cutoff)
+│   ├── train_model.py           # XGBoost churn classifier + LTV regressor
+│   ├── train_recommender.py     # SVD-based collaborative filtering recommender
+│   ├── build_digital_twin.py    # Business-rule orchestrator (churn + LTV + recs -> 1 action)
+│   └── make_visuals.py          # Generates all charts
+├── api/main.py                   # FastAPI serving layer
+├── dashboard/app.py              # Streamlit dashboard with What-If churn simulator
 ├── outputs/
-│   ├── figures/                # All PNG charts + interactive HTML graph
-│   ├── metrics.json             # Node-level only metrics
-│   └── metrics_after_propagation.json
-├── run_pipeline.sh             # One-command end-to-end reproduction
+│   ├── figures/                    # All PNG charts
+│   ├── metrics.json                 # Churn + LTV metrics
+│   ├── recommender_metrics.json
+│   └── digital_twin_model.joblib
+├── run_pipeline.sh                # One-command end-to-end reproduction
 └── requirements.txt
 ```
 
@@ -90,12 +105,12 @@ Because this is unsupervised, evaluation is done against **known injected smurfi
 ```bash
 pip install -r requirements.txt
 
-# Run the full pipeline (data → features → model → propagation → visuals)
+# Run the full pipeline (data → features → models → recommender → twin → visuals)
 bash run_pipeline.sh
 
 # Serve the API
-uvicorn api.main:app --reload --port 8000
-# -> visit http://127.0.0.1:8000/docs
+uvicorn api.main:app --reload --port 8001
+# -> visit http://127.0.0.1:8001/docs
 
 # Launch the dashboard
 streamlit run dashboard/app.py
@@ -104,32 +119,35 @@ streamlit run dashboard/app.py
 ## 🔌 Example API Response
 
 ```
-GET /aml/v1/screen/SINK_00
+GET /customer/v1/twin/U_00002
 ```
 ```json
 {
-  "account_id": "SINK_00",
-  "risk_score": 0.8917,
-  "risk_percentile": 99.96,
-  "alert_status": "CRITICAL",
-  "final_alert": true,
-  "linked_accounts": ["MULE_00_019", "MULE_00_052", "MULE_00_000", "..."],
-  "n_linked_accounts": 56
+  "customer_id": "U_00002",
+  "digital_twin": {
+    "churn_score": 0.7978,
+    "predicted_ltv_12m": 142.46,
+    "ltv_percentile": 0.627,
+    "recommended_categories": ["Grocery", "Electronics", "Fashion"],
+    "system_action": "RETENTION_OFFER",
+    "action_message": "Send a 20-30% discount coupon before they leave - high value, high churn risk."
+  }
 }
 ```
 
 ## 🧠 Key Techniques
 
-- **Graph construction & centrality** — PageRank, betweenness centrality, clustering coefficient, in/out-degree via NetworkX
-- **Unsupervised anomaly detection** — Isolation Forest + PCA-based reconstruction error, combined into a weighted risk score (no labeled fraud data required)
-- **Temporal/behavioral features** — max hourly transaction velocity, round-amount ratio, device diversity
-- **Graph risk propagation** — expands seed alerts to their transaction neighborhood, the technique that takes recall from 30% → 100%
-- **Real-time serving** — FastAPI microservice for account screening
-- **Investigator tooling** — Streamlit dashboard with live network visualization per ring
+- **RFM + behavioral features** — recency, frequency, monetary rollups, plus a week-over-week login trend slope to catch *declining* engagement, not just its current level
+- **Leakage-safe evaluation** — churn labels and features are computed on strictly separated time windows (features from data before the cutoff, label from the 30 days after)
+- **XGBoost churn classifier** — AUC 0.897 on held-out customers
+- **XGBoost LTV regressor** — log-transformed target, MAPE 3.0%, with 99th-percentile capping to control outlier influence
+- **SVD collaborative filtering** — factorizes the user × product-category interaction matrix; evaluated with Recall@K against a genuinely held-out future purchase (1.7x lift over random)
+- **Business-rule orchestrator** — a simple, explainable decision table turns 3 model outputs into 1 action, instead of shipping 3 separate dashboards to the marketing team
+- **What-If simulator** — the Streamlit dashboard lets you drag engagement sliders and watch the churn score respond live, using the real trained model
 
 ## ⚠️ Notes on the Data
 
-All transaction, account, and identity data in this repository is **synthetically generated** using the `Faker` library — no real customer or banking data is used anywhere in this project.
+All user, session, and order data in this repository is **synthetically generated** using the `Faker` library, with realistic engagement-decay and category-preference patterns baked in so the models have genuine signal to learn — no real customer data is used anywhere in this project.
 
 ## 📄 License
 
