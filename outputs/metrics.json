@@ -1,0 +1,7 @@
+{
+  "n_accounts": 2352,
+  "n_ground_truth_smurf_accounts": 352,
+  "recall_at_352": 0.304,
+  "recall_at_100": 0.33,
+  "precision_at_352": 0.304
+}
