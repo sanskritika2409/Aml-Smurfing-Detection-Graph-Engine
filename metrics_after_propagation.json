@@ -1,7 +1,0 @@
-{
-  "seed_accounts_flagged": 24,
-  "total_accounts_flagged_after_propagation": 509,
-  "ground_truth_smurf_accounts": 352,
-  "recall_after_propagation": 1.0,
-  "precision_after_propagation": 0.6916
-}
