@@ -1,9 +1,0 @@
-{
-  "n_users_evaluated": 3061,
-  "k": 3,
-  "n_categories": 8,
-  "precision_at_3": 0.2123,
-  "recall_at_3": 0.637,
-  "random_baseline_recall_at_k": 0.375,
-  "lift_over_random": 1.7
-}
